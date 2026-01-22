@@ -7,14 +7,15 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 24/7 Server Setup ---
+# --- 24/7 Web Server (Koyeb Health Check සඳහා අත්‍යවශ්‍යයි) ---
 app = Flask('')
 @app.route('/')
-def home(): return "Premium Music Bot is Online 24/7!"
+def home(): return "Bot is Online 24/7 with Docker!"
 
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
-    t = Thread(target=run).start()
+    t = Thread(target=run)
+    t.start()
 
 # --- Bot Setup ---
 class MyBot(commands.Bot):
@@ -22,7 +23,6 @@ class MyBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True 
         super().__init__(command_prefix="!", intents=intents)
-        self.is_247 = {}
 
     async def setup_hook(self):
         await self.tree.sync()
@@ -30,7 +30,7 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# YouTube Error එක මගහරවා ගැනීමට cookies.txt භාවිතය
+# YouTube Cookies සහ FFmpeg සෙටින්ග්ස්
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -46,25 +46,11 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
-# --- Commands ---
-
-@bot.tree.command(name="join", description="Voice channel එකට සම්බන්ධ වේ")
-async def join(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    if interaction.user.voice:
-        channel = interaction.user.voice.channel
-        if interaction.guild.voice_client:
-            await interaction.guild.voice_client.move_to(channel)
-        else:
-            await channel.connect()
-        await interaction.followup.send(f"✅ **{channel.name}** වෙත සම්බන්ධ වුණා")
-    else:
-        await interaction.followup.send("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
-
 @bot.tree.command(name="play", description="සින්දුවක් ප්ලේ කරන්න")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer(ephemeral=True)
     
+    # වොයිස් චැනල් එකට සම්බන්ධ වීම
     if not interaction.guild.voice_client:
         if interaction.user.voice:
             await interaction.user.voice.channel.connect()
@@ -78,48 +64,38 @@ async def play(interaction: discord.Interaction, search: str):
             url = info['url']
             title = info['title']
             
-            await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title))
-            
+            # Audio Source එක සකස් කිරීම
             source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-            interaction.guild.voice_client.stop()
-            interaction.guild.voice_client.play(source)
+            
+            # ප්ලේ කරන අතරතුර එන Errors බලා ගැනීමට
+            def after_playing(error):
+                if error: print(f'Player error: {error}')
+
+            if interaction.guild.voice_client.is_playing():
+                interaction.guild.voice_client.stop()
+                
+            interaction.guild.voice_client.play(source, after=after_playing)
             await interaction.followup.send(f"🎶 දැන් වාදනය වේ: **{title}**")
+            
     except Exception as e:
-        error_msg = str(e)
-        if "confirm you're not a bot" in error_msg:
-            await interaction.followup.send("❌ YouTube බ්ලොක් එකක්! කරුණාකර cookies.txt එක Update කරන්න.")
-        elif "ffmpeg" in error_msg.lower():
-            await interaction.followup.send("❌ ffmpeg සොයාගත නොහැක! Aptfile එක පරීක්ෂා කර Trigger Build දෙන්න.")
+        error_msg = str(e).lower()
+        if "ffmpeg" in error_msg:
+            await interaction.followup.send("❌ FFmpeg සොයාගත නොහැක. කරුණාකර Dockerfile එක පරීක්ෂා කරන්න.")
         else:
-            await interaction.followup.send(f"❌ දෝෂයක්: {error_msg[:100]}")
+            await interaction.followup.send(f"❌ දෝෂයක්: {str(e)[:100]}")
 
 @bot.tree.command(name="stop", description="සින්දුව නතර කරන්න")
 async def stop(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
     if interaction.guild.voice_client:
         interaction.guild.voice_client.stop()
-        await interaction.followup.send("🛑 සින්දුව නතර කළා")
-    else:
-        await interaction.followup.send("❌ සින්දුවක් ප්ලේ වෙන්නේ නැත.")
+        await interaction.response.send_message("🛑 සින්දුව නතර කළා", ephemeral=True)
 
 @bot.tree.command(name="leave", description="Channel එකෙන් ඉවත් වන්න")
 async def leave(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
     if interaction.guild.voice_client:
-        bot.is_247[interaction.guild.id] = False
         await interaction.guild.voice_client.disconnect()
-        await interaction.followup.send("👋 ඉවත් වුණා")
-    else:
-        await interaction.followup.send("❌ මම Voice channel එකක නැත.")
-
-@bot.tree.command(name="247", description="බොට්ව 24/7 චැනල් එකේ තබන්න")
-async def mode_247(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    guild_id = interaction.guild.id
-    bot.is_247[guild_id] = not bot.is_247.get(guild_id, False)
-    status = "සක්‍රියයි" if bot.is_247[guild_id] else "අක්‍රියයි"
-    await interaction.followup.send(f"♾️ 24/7 Mode {status}")
+        await interaction.response.send_message("👋 ඉවත් වුණා", ephemeral=True)
 
 keep_alive()
-# TOKEN එක සෘජුව මෙහි ලියන්න එපා, Koyeb Variables වලට දාන්න
+# TOKEN එක Koyeb Environment Variables වල DISCORD_TOKEN ලෙස තිබිය යුතුයි
 bot.run(os.getenv('DISCORD_TOKEN'))
