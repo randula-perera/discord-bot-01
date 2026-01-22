@@ -6,10 +6,10 @@ import os
 from flask import Flask
 from threading import Thread
 
-# --- 24/7 Server Setup (Keep Alive) ---
+# --- 24/7 Server Setup ---
 app = Flask('')
 @app.route('/')
-def home(): return "Premium Music Bot is Online!"
+def home(): return "Bot is Online!"
 
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
@@ -18,14 +18,15 @@ def keep_alive():
 # --- Bot Setup ---
 class MyBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.all()
+        # Intents නිවැරදිව සැකසීම
+        intents = discord.Intents.default()
+        intents.message_content = True 
         super().__init__(command_prefix="!", intents=intents)
         self.is_247 = {}
 
     async def setup_hook(self):
-        # සියලුම slash commands වහාම sync කිරීම
         await self.tree.sync()
-        print("✅ Slash Commands successfully synced!")
+        print("✅ Slash Commands Synced!")
 
 bot = MyBot()
 
@@ -36,10 +37,10 @@ FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconne
 
 @bot.tree.command(name="join", description="Voice channel එකට සම්බන්ධ වේ")
 async def join(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True) # Timeout වීම වළක්වයි
+    await interaction.response.defer(ephemeral=True)
     if interaction.user.voice:
         channel = interaction.user.voice.channel
-        if interaction.guild.voice_client is not None:
+        if interaction.guild.voice_client:
             await interaction.guild.voice_client.move_to(channel)
         else:
             await channel.connect()
@@ -48,16 +49,13 @@ async def join(interaction: discord.Interaction):
         await interaction.followup.send("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
 
 @bot.tree.command(name="play", description="සින්දුවක් ප්ලේ කරන්න")
-@app_commands.describe(search="YouTube Link එක හෝ සින්දුවේ නම")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer(ephemeral=True)
-    
-    # Voice channel එකට සම්බන්ධ වීම
     if not interaction.guild.voice_client:
         if interaction.user.voice:
             await interaction.user.voice.channel.connect()
         else:
-            return await interaction.followup.send("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
+            return await interaction.followup.send("❌ කලින් Voice channel එකකට සම්බන්ධ වෙන්න.")
 
     try:
         with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
@@ -66,15 +64,13 @@ async def play(interaction: discord.Interaction, search: str):
             url = info['url']
             title = info['title']
             
-            # Bot status එකේ සින්දුව පෙන්වීම
             await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title))
-            
             source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
             interaction.guild.voice_client.stop()
             interaction.guild.voice_client.play(source)
             await interaction.followup.send(f"🎶 දැන් වාදනය වේ: **{title}**")
     except Exception as e:
-        await interaction.followup.send(f"❌ දෝෂයක් සිදු වුණා: {str(e)}")
+        await interaction.followup.send(f"❌ දෝෂයක්: {str(e)}")
 
 @bot.tree.command(name="stop", description="සින්දුව නතර කරන්න")
 async def stop(interaction: discord.Interaction):
@@ -95,7 +91,7 @@ async def leave(interaction: discord.Interaction):
     else:
         await interaction.followup.send("❌ මම Voice channel එකක නැත.")
 
-@bot.tree.command(name="247", description="24/7 Mode එක සක්‍රිය/අක්‍රිය කරන්න")
+@bot.tree.command(name="247", description="බොට්ව 24/7 චැනල් එකේ තබන්න")
 async def mode_247(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     guild_id = interaction.guild.id
@@ -103,7 +99,6 @@ async def mode_247(interaction: discord.Interaction):
     status = "සක්‍රියයි" if bot.is_247[guild_id] else "අක්‍රියයි"
     await interaction.followup.send(f"♾️ 24/7 Mode {status}")
 
-# 24/7 Auto Reconnect Logic
 @bot.event
 async def on_voice_state_update(member, before, after):
     if member.id == bot.user.id and after.channel is None:
@@ -111,5 +106,4 @@ async def on_voice_state_update(member, before, after):
             await before.channel.connect()
 
 keep_alive()
-token = os.getenv('DISCORD_TOKEN')
-bot.run(token)
+bot.run(os.getenv('DISCORD_TOKEN'))
