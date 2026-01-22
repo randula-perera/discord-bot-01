@@ -112,4 +112,4 @@ async def on_voice_state_update(member, before, after):
             await before.channel.connect()
 
 keep_alive()
-bot.run('MTQ2Mzg0NzEzMDc3ODMwNDU4MA.GU2d2Y.Bua7kC6qgmaOyV8L8JARn5DqT4u3Bzywa7X4EA')
+bot.run('MTQ2Mzg0NzEzMDc3ODMwNDU4MA.Gifpte.m0rC4O9HaOSnkNY98kAcCfwm_zN0o8PL6PHe9E')
