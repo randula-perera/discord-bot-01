@@ -10,7 +10,7 @@ from threading import Thread
 # --- 24/7 Server Setup ---
 app = Flask('')
 @app.route('/')
-def home(): return "Premium Music Bot is Online!"
+def home(): return "Premium Music Bot is Online 24/7!"
 
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
@@ -19,7 +19,6 @@ def keep_alive():
 # --- Bot Setup ---
 class MyBot(commands.Bot):
     def __init__(self):
-        # අත්‍යවශ්‍ය intents පමණක් ලබා දීම (Intents Error එක වැළැක්වීමට)
         intents = discord.Intents.default()
         intents.message_content = True 
         super().__init__(command_prefix="!", intents=intents)
@@ -31,16 +30,14 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# YouTube Error එක මගහරවා ගැනීමට අවශ්‍ය Settings
+# YouTube Error එක මගහරවා ගැනීමට cookies.txt භාවිතය
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
     'quiet': True,
     'default_search': 'auto',
     'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
-    'no_warnings': True,
+    'cookiefile': 'cookies.txt', # ඔබේ GitHub හි cookies.txt තිබිය යුතුය
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
@@ -67,6 +64,7 @@ async def join(interaction: discord.Interaction):
 @bot.tree.command(name="play", description="සින්දුවක් ප්ලේ කරන්න")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer(ephemeral=True)
+    
     if not interaction.guild.voice_client:
         if interaction.user.voice:
             await interaction.user.voice.channel.connect()
@@ -75,13 +73,11 @@ async def play(interaction: discord.Interaction, search: str):
 
     try:
         with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-            # YouTube සෙවුම සිදු කිරීම
             info = ydl.extract_info(f"ytsearch:{search}" if not search.startswith("http") else search, download=False)
             if 'entries' in info: info = info['entries'][0]
             url = info['url']
             title = info['title']
             
-            # Bot Status එක වෙනස් කිරීම
             await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title))
             
             source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
@@ -89,7 +85,13 @@ async def play(interaction: discord.Interaction, search: str):
             interaction.guild.voice_client.play(source)
             await interaction.followup.send(f"🎶 දැන් වාදනය වේ: **{title}**")
     except Exception as e:
-        await interaction.followup.send(f"❌ දෝෂයක්: {str(e)}")
+        error_msg = str(e)
+        if "confirm you're not a bot" in error_msg:
+            await interaction.followup.send("❌ YouTube බ්ලොක් එකක්! කරුණාකර cookies.txt එක Update කරන්න.")
+        elif "ffmpeg" in error_msg.lower():
+            await interaction.followup.send("❌ ffmpeg සොයාගත නොහැක! Aptfile එක පරීක්ෂා කර Trigger Build දෙන්න.")
+        else:
+            await interaction.followup.send(f"❌ දෝෂයක්: {error_msg[:100]}")
 
 @bot.tree.command(name="stop", description="සින්දුව නතර කරන්න")
 async def stop(interaction: discord.Interaction):
@@ -119,4 +121,5 @@ async def mode_247(interaction: discord.Interaction):
     await interaction.followup.send(f"♾️ 24/7 Mode {status}")
 
 keep_alive()
+# TOKEN එක සෘජුව මෙහි ලියන්න එපා, Koyeb Variables වලට දාන්න
 bot.run(os.getenv('DISCORD_TOKEN'))
