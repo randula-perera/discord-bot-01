@@ -6,7 +6,7 @@ import os
 from flask import Flask
 from threading import Thread
 
-# --- 24/7 Server Setup ---
+# --- 24/7 Server Setup (Keep Alive) ---
 app = Flask('')
 @app.route('/')
 def home(): return "Premium Music Bot is Online!"
@@ -18,11 +18,14 @@ def keep_alive():
 # --- Bot Setup ---
 class MyBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=discord.Intents.all())
+        intents = discord.Intents.all()
+        super().__init__(command_prefix="!", intents=intents)
         self.is_247 = {}
 
     async def setup_hook(self):
+        # සියලුම slash commands වහාම sync කිරීම
         await self.tree.sync()
+        print("✅ Slash Commands successfully synced!")
 
 bot = MyBot()
 
@@ -33,58 +36,72 @@ FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconne
 
 @bot.tree.command(name="join", description="Voice channel එකට සම්බන්ධ වේ")
 async def join(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True) # Timeout වීම වළක්වයි
     if interaction.user.voice:
         channel = interaction.user.voice.channel
-        await channel.connect()
-        await interaction.response.send_message(f"✅ **{channel.name}** වෙත සම්බන්ධ වුණා", ephemeral=True)
+        if interaction.guild.voice_client is not None:
+            await interaction.guild.voice_client.move_to(channel)
+        else:
+            await channel.connect()
+        await interaction.followup.send(f"✅ **{channel.name}** වෙත සම්බන්ධ වුණා")
     else:
-        await interaction.response.send_message("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.", ephemeral=True)
+        await interaction.followup.send("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
 
 @bot.tree.command(name="play", description="සින්දුවක් ප්ලේ කරන්න")
+@app_commands.describe(search="YouTube Link එක හෝ සින්දුවේ නම")
 async def play(interaction: discord.Interaction, search: str):
-    await interaction.response.send_message(f"🔍 සෙවුම් කරමින්: {search}", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     
+    # Voice channel එකට සම්බන්ධ වීම
     if not interaction.guild.voice_client:
         if interaction.user.voice:
             await interaction.user.voice.channel.connect()
         else:
-            return
+            return await interaction.followup.send("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
 
-    with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-        info = ydl.extract_info(search, download=False)
-        if 'entries' in info: info = info['entries'][0]
-        url = info['url']
-        
-        # බොට්ගේ Status එකේ සින්දුවේ නම පෙන්වීම
-        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=info['title']))
-        
-        source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-        interaction.guild.voice_client.stop()
-        interaction.guild.voice_client.play(source)
+    try:
+        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+            info = ydl.extract_info(f"ytsearch:{search}" if not search.startswith("http") else search, download=False)
+            if 'entries' in info: info = info['entries'][0]
+            url = info['url']
+            title = info['title']
+            
+            # Bot status එකේ සින්දුව පෙන්වීම
+            await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title))
+            
+            source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+            interaction.guild.voice_client.stop()
+            interaction.guild.voice_client.play(source)
+            await interaction.followup.send(f"🎶 දැන් වාදනය වේ: **{title}**")
+    except Exception as e:
+        await interaction.followup.send(f"❌ දෝෂයක් සිදු වුණා: {str(e)}")
 
 @bot.tree.command(name="stop", description="සින්දුව නතර කරන්න")
 async def stop(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     if interaction.guild.voice_client:
         interaction.guild.voice_client.stop()
-        await interaction.response.send_message("🛑 සින්දුව නතර කළා", ephemeral=True)
+        await interaction.followup.send("🛑 සින්දුව නතර කළා")
     else:
-        await interaction.response.send_message("❌ මම සින්දුවක් ප්ලේ කරමින් නොවේ ඉන්නේ.", ephemeral=True)
+        await interaction.followup.send("❌ මම සින්දුවක් ප්ලේ කරමින් නොවේ ඉන්නේ.")
 
 @bot.tree.command(name="leave", description="Channel එකෙන් ඉවත් වන්න")
 async def leave(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     if interaction.guild.voice_client:
-        bot.is_247[interaction.guild.id] = False # Leave වෙද්දී 24/7 mode එක ඕෆ් කරයි
+        bot.is_247[interaction.guild.id] = False
         await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("👋 ඉවත් වුණා", ephemeral=True)
+        await interaction.followup.send("👋 ඉවත් වුණා")
     else:
-        await interaction.response.send_message("❌ මම Voice channel එකක නැත.", ephemeral=True)
+        await interaction.followup.send("❌ මම Voice channel එකක නැත.")
 
 @bot.tree.command(name="247", description="24/7 Mode එක සක්‍රිය/අක්‍රිය කරන්න")
 async def mode_247(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     guild_id = interaction.guild.id
     bot.is_247[guild_id] = not bot.is_247.get(guild_id, False)
     status = "සක්‍රියයි" if bot.is_247[guild_id] else "අක්‍රියයි"
-    await interaction.response.send_message(f"♾️ 24/7 Mode {status}", ephemeral=True)
+    await interaction.followup.send(f"♾️ 24/7 Mode {status}")
 
 # 24/7 Auto Reconnect Logic
 @bot.event
@@ -94,4 +111,5 @@ async def on_voice_state_update(member, before, after):
             await before.channel.connect()
 
 keep_alive()
-bot.run(os.getenv('DISCORD_TOKEN'))
+token = os.getenv('DISCORD_TOKEN')
+bot.run(token)
