@@ -6,21 +6,22 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- 24/7 Server Setup (Keep Alive) ---
+# --- 24/7 Web Server (Keep Alive) ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "බොට් සක්‍රියයි (24/7 Mode On)"
+    return "Bot is Online and Running 24/7!"
 
 def run():
+    # Koyeb සාමාන්‍යයෙන් පාවිච්චි කරන්නේ 8080 port එකයි
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- Bot Setup ---
+# --- Discord Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='/', intents=intents)
@@ -39,12 +40,12 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
-# 24/7 Mode Status
 is_247 = {}
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user}')
+    print(f'Logged in as {bot.user.name}')
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="/play"))
 
 # --- Commands ---
 
@@ -55,7 +56,7 @@ async def join(ctx):
         if ctx.voice_client is not None:
             return await ctx.voice_client.move_to(channel)
         await channel.connect()
-        await ctx.send(f"✅ {channel} වෙත සම්බන්ධ වුණා.")
+        await ctx.send(f"✅ **{channel}** වෙත සම්බන්ධ වුණා.")
     else:
         await ctx.send("❌ මුලින්ම Voice Channel එකකට ජොයින් වෙන්න!")
 
@@ -65,25 +66,27 @@ async def play(ctx, *, search):
         await ctx.invoke(join)
     
     async with ctx.typing():
-        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-            info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
-            url = info['url']
-            title = info['title']
-            source = await discord.FFmpegOpusAudio.from_probe(url, **FFMPEG_OPTIONS)
-            ctx.voice_client.stop()
-            ctx.voice_client.play(source)
-    
-    await ctx.send(f"🎵 දැන් වාදනය වේ: **{title}**")
+        try:
+            with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+                info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
+                url = info['url']
+                title = info['title']
+                source = await discord.FFmpegOpusAudio.from_probe(url, **FFMPEG_OPTIONS)
+                ctx.voice_client.stop()
+                ctx.voice_client.play(source)
+                await ctx.send(f"🎵 දැන් වාදනය වේ: **{title}**")
+        except Exception as e:
+            await ctx.send(f"❌ දෝෂයක් සිදු වුණා: {str(e)}")
 
 @bot.command(name="24/7")
 async def mode_247(ctx):
     guild_id = ctx.guild.id
     if guild_id not in is_247 or not is_247[guild_id]:
         is_247[guild_id] = True
-        await ctx.send("♾️ 24/7 Mode සක්‍රියයි! මම චැනල් එකෙන් ඉවත් වෙන්නේ නැහැ.")
+        await ctx.send("♾️ **24/7 Mode සක්‍රියයි!** මම මේ චැනල් එකේ දිගටම ඉන්නවා.")
     else:
         is_247[guild_id] = False
-        await ctx.send("📴 24/7 Mode අක්‍රියයි.")
+        await ctx.send("📴 **24/7 Mode අක්‍රියයි.**")
 
 @bot.command()
 async def skip(ctx):
@@ -96,20 +99,22 @@ async def skip(ctx):
 @bot.command()
 async def stop(ctx):
     if ctx.voice_client:
-        is_247[ctx.guild.id] = False # Stop කළොත් 24/7 නතර වේ
+        is_247[ctx.guild.id] = False
         await ctx.voice_client.disconnect()
-        await ctx.send("🛑 මම නතර වුණා, Voice Channel එකෙන් ඉවත් වුණා.")
-    else:
-        await ctx.send("❌ මම දැනටමත් Voice Channel එකක නැහැ.")
+        await ctx.send("🛑 නතර කළා සහ Voice Channel එකෙන් ඉවත් වුණා.")
 
-# Voice State Update (24/7 Mode එක තබා ගැනීමට)
+# Disconnect වුණොත් ආයේ Join වෙන්න (24/7 Mode)
 @bot.event
 async def on_voice_state_update(member, before, after):
     if member.id == bot.user.id and after.channel is None:
         guild_id = member.guild.id
         if guild_id in is_247 and is_247[guild_id]:
-            # යම් හේතුවකින් disconnect වුණොත් නැවත join වේ
             await before.channel.connect()
 
+# Koyeb Environment Variable එකෙන් Token එක ලබා ගැනීම
 keep_alive()
-bot.run('MTQ2Mzg0NzEzMDc3ODMwNDU4MA.Gifpte.m0rC4O9HaOSnkNY98kAcCfwm_zN0o8PL6PHe9E')
+token = os.getenv('DISCORD_TOKEN')
+if token:
+    bot.run(token)
+else:
+    print("Error: DISCORD_TOKEN හමු වුණේ නැහැ. කරුණාකර Koyeb Environment Variables පරීක්ෂා කරන්න.")
