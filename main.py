@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands # Slash commands සඳහා
 from discord.ext import commands
 import yt_dlp
 import asyncio
@@ -6,115 +7,70 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- 24/7 Web Server (Keep Alive) ---
+# --- 24/7 Web Server ---
 app = Flask('')
-
 @app.route('/')
-def home():
-    return "Bot is Online and Running 24/7!"
+def home(): return "Bot is Online!"
 
-def run():
-    # Koyeb සාමාන්‍යයෙන් පාවිච්චි කරන්නේ 8080 port එකයි
-    app.run(host='0.0.0.0', port=8080)
-
+def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- Discord Bot Setup ---
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='/', intents=intents)
+# --- Bot Setup ---
+class MyBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
 
-# Music Configuration
-YDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'noplaylist': False,
-    'quiet': True,
-    'default_search': 'auto',
-    'source_address': '0.0.0.0'
-}
+    async def setup_hook(self):
+        # මෙතනින් තමයි commands ටික Discord එකට sync කරන්නේ
+        await self.tree.sync()
+        print("Slash Commands Synced!")
 
-FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
-}
+bot = MyBot()
 
-is_247 = {}
+YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': False, 'quiet': True, 'default_search': 'auto'}
+FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 
-@bot.event
-async def on_ready():
-    print(f'Logged in as {bot.user.name}')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="/play"))
+# --- Slash Commands ---
 
-# --- Commands ---
-
-@bot.command()
-async def join(ctx):
-    if ctx.author.voice:
-        channel = ctx.author.voice.channel
-        if ctx.voice_client is not None:
-            return await ctx.voice_client.move_to(channel)
+@bot.tree.command(name="join", description="Voice channel එකට සම්බන්ධ වේ")
+async def join(interaction: discord.Interaction):
+    if interaction.user.voice:
+        channel = interaction.user.voice.channel
         await channel.connect()
-        await ctx.send(f"✅ **{channel}** වෙත සම්බන්ධ වුණා.")
+        await interaction.response.send_message(f"✅ {channel.name} වෙත සම්බන්ධ වුණා!")
     else:
-        await ctx.send("❌ මුලින්ම Voice Channel එකකට ජොයින් වෙන්න!")
+        await interaction.response.send_message("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
 
-@bot.command()
-async def play(ctx, *, search):
-    if not ctx.voice_client:
-        await ctx.invoke(join)
+@bot.tree.command(name="play", description="සින්දුවක් ප්ලේ කරන්න")
+async def play(interaction: discord.Interaction, search: str):
+    await interaction.response.defer() # ලෝඩ් වෙන්න වෙලාව ලබා දීම
     
-    async with ctx.typing():
-        try:
-            with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
-                url = info['url']
-                title = info['title']
-                source = await discord.FFmpegOpusAudio.from_probe(url, **FFMPEG_OPTIONS)
-                ctx.voice_client.stop()
-                ctx.voice_client.play(source)
-                await ctx.send(f"🎵 දැන් වාදනය වේ: **{title}**")
-        except Exception as e:
-            await ctx.send(f"❌ දෝෂයක් සිදු වුණා: {str(e)}")
+    if not interaction.guild.voice_client:
+        if interaction.user.voice:
+            await interaction.user.voice.channel.connect()
+        else:
+            return await interaction.followup.send("❌ Voice channel එකක නැත.")
 
-@bot.command(name="24/7")
-async def mode_247(ctx):
-    guild_id = ctx.guild.id
-    if guild_id not in is_247 or not is_247[guild_id]:
-        is_247[guild_id] = True
-        await ctx.send("♾️ **24/7 Mode සක්‍රියයි!** මම මේ චැනල් එකේ දිගටම ඉන්නවා.")
+    with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+        info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
+        url = info['url']
+        source = await discord.FFmpegOpusAudio.from_probe(url, **FFMPEG_OPTIONS)
+        interaction.guild.voice_client.stop()
+        interaction.guild.voice_client.play(source)
+    
+    await interaction.followup.send(f"🎵 ප්ලේ වෙනවා: **{info['title']}**")
+
+@bot.tree.command(name="stop", description="නතර කර ඉවත් වන්න")
+async def stop(interaction: discord.Interaction):
+    if interaction.guild.voice_client:
+        await interaction.guild.voice_client.disconnect()
+        await interaction.response.send_message("🛑 නතර කළා.")
     else:
-        is_247[guild_id] = False
-        await ctx.send("📴 **24/7 Mode අක්‍රියයි.**")
+        await interaction.response.send_message("❌ මම voice channel එකක නැහැ.")
 
-@bot.command()
-async def skip(ctx):
-    if ctx.voice_client and ctx.voice_client.is_playing():
-        ctx.voice_client.stop()
-        await ctx.send("⏭️ සින්දුව Skip කළා.")
-    else:
-        await ctx.send("❌ දැනට කිසිම සින්දුවක් ප්ලේ වෙන්නේ නැහැ.")
-
-@bot.command()
-async def stop(ctx):
-    if ctx.voice_client:
-        is_247[ctx.guild.id] = False
-        await ctx.voice_client.disconnect()
-        await ctx.send("🛑 නතර කළා සහ Voice Channel එකෙන් ඉවත් වුණා.")
-
-# Disconnect වුණොත් ආයේ Join වෙන්න (24/7 Mode)
-@bot.event
-async def on_voice_state_update(member, before, after):
-    if member.id == bot.user.id and after.channel is None:
-        guild_id = member.guild.id
-        if guild_id in is_247 and is_247[guild_id]:
-            await before.channel.connect()
-
-# Koyeb Environment Variable එකෙන් Token එක ලබා ගැනීම
 keep_alive()
-token = os.getenv('DISCORD_TOKEN')
-if token:
-    bot.run(token)
-else:
-    print("Error: DISCORD_TOKEN හමු වුණේ නැහැ. කරුණාකර Koyeb Environment Variables පරීක්ෂා කරන්න.")
+bot.run(os.getenv('DISCORD_TOKEN'))
