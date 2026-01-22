@@ -4,12 +4,14 @@ import yt_dlp
 import asyncio
 from flask import Flask
 from threading import Thread
+import os
 
-# --- 24/7 Server Setup ---
+# --- 24/7 Server Setup (Keep Alive) ---
 app = Flask('')
+
 @app.route('/')
 def home():
-    return "I am alive!"
+    return "බොට් සක්‍රියයි (24/7 Mode On)"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
@@ -21,13 +23,15 @@ def keep_alive():
 # --- Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='/', intents=intents)
 
+# Music Configuration
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
-    'noplaylist': True,
+    'noplaylist': False,
     'quiet': True,
-    'default_search': 'auto'
+    'default_search': 'auto',
+    'source_address': '0.0.0.0'
 }
 
 FFMPEG_OPTIONS = {
@@ -35,24 +39,77 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
+# 24/7 Mode Status
+is_247 = {}
+
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
 
+# --- Commands ---
+
 @bot.command()
-async def stream(ctx, url):
-    if not ctx.author.voice:
-        return await ctx.send("Voice channel එකකට මුලින්ම ජොයින් වෙන්න!")
+async def join(ctx):
+    if ctx.author.voice:
+        channel = ctx.author.voice.channel
+        if ctx.voice_client is not None:
+            return await ctx.voice_client.move_to(channel)
+        await channel.connect()
+        await ctx.send(f"✅ {channel} වෙත සම්බන්ධ වුණා.")
+    else:
+        await ctx.send("❌ මුලින්ම Voice Channel එකකට ජොයින් වෙන්න!")
+
+@bot.command()
+async def play(ctx, *, search):
+    if not ctx.voice_client:
+        await ctx.invoke(join)
     
-    vc = await ctx.author.voice.channel.connect()
+    async with ctx.typing():
+        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+            info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
+            url = info['url']
+            title = info['title']
+            source = await discord.FFmpegOpusAudio.from_probe(url, **FFMPEG_OPTIONS)
+            ctx.voice_client.stop()
+            ctx.voice_client.play(source)
     
-    with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-        info = ydl.extract_info(url, download=False)
-        url2 = info['url']
-        source = await discord.FFmpegOpusAudio.from_probe(url2, **FFMPEG_OPTIONS)
-        vc.play(source)
-    
-    await ctx.send(f"දැන් Live Stream එක වාදනය වෙනවා: {info['title']}")
+    await ctx.send(f"🎵 දැන් වාදනය වේ: **{title}**")
+
+@bot.command(name="24/7")
+async def mode_247(ctx):
+    guild_id = ctx.guild.id
+    if guild_id not in is_247 or not is_247[guild_id]:
+        is_247[guild_id] = True
+        await ctx.send("♾️ 24/7 Mode සක්‍රියයි! මම චැනල් එකෙන් ඉවත් වෙන්නේ නැහැ.")
+    else:
+        is_247[guild_id] = False
+        await ctx.send("📴 24/7 Mode අක්‍රියයි.")
+
+@bot.command()
+async def skip(ctx):
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        await ctx.send("⏭️ සින්දුව Skip කළා.")
+    else:
+        await ctx.send("❌ දැනට කිසිම සින්දුවක් ප්ලේ වෙන්නේ නැහැ.")
+
+@bot.command()
+async def stop(ctx):
+    if ctx.voice_client:
+        is_247[ctx.guild.id] = False # Stop කළොත් 24/7 නතර වේ
+        await ctx.voice_client.disconnect()
+        await ctx.send("🛑 මම නතර වුණා, Voice Channel එකෙන් ඉවත් වුණා.")
+    else:
+        await ctx.send("❌ මම දැනටමත් Voice Channel එකක නැහැ.")
+
+# Voice State Update (24/7 Mode එක තබා ගැනීමට)
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if member.id == bot.user.id and after.channel is None:
+        guild_id = member.guild.id
+        if guild_id in is_247 and is_247[guild_id]:
+            # යම් හේතුවකින් disconnect වුණොත් නැවත join වේ
+            await before.channel.connect()
 
 keep_alive()
 bot.run('MTQ2Mzg0NzEzMDc3ODMwNDU4MA.GU2d2Y.Bua7kC6qgmaOyV8L8JARn5DqT4u3Bzywa7X4EA')
