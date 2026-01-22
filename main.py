@@ -3,13 +3,14 @@ from discord import app_commands
 from discord.ext import commands
 import yt_dlp
 import os
+import asyncio
 from flask import Flask
 from threading import Thread
 
 # --- 24/7 Server Setup ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Online!"
+def home(): return "Premium Music Bot is Online!"
 
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
@@ -18,7 +19,7 @@ def keep_alive():
 # --- Bot Setup ---
 class MyBot(commands.Bot):
     def __init__(self):
-        # Intents නිවැරදිව සැකසීම
+        # අත්‍යවශ්‍ය intents පමණක් ලබා දීම (Intents Error එක වැළැක්වීමට)
         intents = discord.Intents.default()
         intents.message_content = True 
         super().__init__(command_prefix="!", intents=intents)
@@ -26,12 +27,27 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         await self.tree.sync()
-        print("✅ Slash Commands Synced!")
+        print("✅ Slash Commands successfully synced!")
 
 bot = MyBot()
 
-YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True}
-FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
+# YouTube Error එක මගහරවා ගැනීමට අවශ්‍ය Settings
+YDL_OPTIONS = {
+    'format': 'bestaudio/best',
+    'noplaylist': True,
+    'quiet': True,
+    'default_search': 'auto',
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'no_warnings': True,
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
+
+FFMPEG_OPTIONS = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
+}
 
 # --- Commands ---
 
@@ -55,16 +71,19 @@ async def play(interaction: discord.Interaction, search: str):
         if interaction.user.voice:
             await interaction.user.voice.channel.connect()
         else:
-            return await interaction.followup.send("❌ කලින් Voice channel එකකට සම්බන්ධ වෙන්න.")
+            return await interaction.followup.send("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
 
     try:
         with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+            # YouTube සෙවුම සිදු කිරීම
             info = ydl.extract_info(f"ytsearch:{search}" if not search.startswith("http") else search, download=False)
             if 'entries' in info: info = info['entries'][0]
             url = info['url']
             title = info['title']
             
+            # Bot Status එක වෙනස් කිරීම
             await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title))
+            
             source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
             interaction.guild.voice_client.stop()
             interaction.guild.voice_client.play(source)
@@ -79,7 +98,7 @@ async def stop(interaction: discord.Interaction):
         interaction.guild.voice_client.stop()
         await interaction.followup.send("🛑 සින්දුව නතර කළා")
     else:
-        await interaction.followup.send("❌ මම සින්දුවක් ප්ලේ කරමින් නොවේ ඉන්නේ.")
+        await interaction.followup.send("❌ සින්දුවක් ප්ලේ වෙන්නේ නැත.")
 
 @bot.tree.command(name="leave", description="Channel එකෙන් ඉවත් වන්න")
 async def leave(interaction: discord.Interaction):
@@ -98,12 +117,6 @@ async def mode_247(interaction: discord.Interaction):
     bot.is_247[guild_id] = not bot.is_247.get(guild_id, False)
     status = "සක්‍රියයි" if bot.is_247[guild_id] else "අක්‍රියයි"
     await interaction.followup.send(f"♾️ 24/7 Mode {status}")
-
-@bot.event
-async def on_voice_state_update(member, before, after):
-    if member.id == bot.user.id and after.channel is None:
-        if bot.is_247.get(member.guild.id, False):
-            await before.channel.connect()
 
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN'))
