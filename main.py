@@ -1,101 +1,84 @@
 import discord
-from discord import app_commands
 from discord.ext import commands
 import yt_dlp
-import os
 import asyncio
-from flask import Flask
-from threading import Thread
 
-# --- 24/7 Web Server (Koyeb Health Check සඳහා අත්‍යවශ්‍යයි) ---
-app = Flask('')
-@app.route('/')
-def home(): return "Bot is Online 24/7 with Docker!"
+# --- SETTINGS ---
+TOKEN = 'YOUR_BOT_TOKEN_HERE'
+YOUTUBE_URL = 'https://www.youtube.com/live/xf9Ejt4OmWQ?si=1t_PXPMienFqVtal'
 
-def run(): app.run(host='0.0.0.0', port=8080)
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+# Bot Intents setup
+intents = discord.Intents.default()
+intents.message_content = True  # Command කියවන්න මේක ඕනේ
+bot = commands.Bot(command_prefix="/", intents=intents)
 
-# --- Bot Setup ---
-class MyBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True 
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def setup_hook(self):
-        await self.tree.sync()
-        print("✅ Slash Commands successfully synced!")
-
-bot = MyBot()
-
-# YouTube Cookies සහ FFmpeg සෙටින්ග්ස්
-YDL_OPTIONS = {
+ytdl_options = {
     'format': 'bestaudio/best',
     'noplaylist': True,
     'quiet': True,
+    'no_warnings': True,
     'default_search': 'auto',
-    'nocheckcertificate': True,
-    'cookiefile': 'cookies.txt', # ඔබේ GitHub හි cookies.txt තිබිය යුතුය
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'source_address': '0.0.0.0'
 }
 
-FFMPEG_OPTIONS = {
+ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
 }
 
-@bot.tree.command(name="play", description="සින්දුවක් ප්ලේ කරන්න")
-async def play(interaction: discord.Interaction, search: str):
-    await interaction.response.defer(ephemeral=True)
+ytdl = yt_dlp.YoutubeDL(ytdl_options)
+
+class YTDLSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, data, volume=0.5):
+        super().__init__(source, volume)
+        self.data = data
+
+    @classmethod
+    async def from_url(cls, url, *, loop=None, stream=True):
+        loop = loop or asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+        filename = data['url'] if stream else ytdl.prepare_filename(data)
+        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+
+@bot.event
+async def on_ready():
+    print(f'{bot.user.name} is online and ready!')
+
+@bot.command()
+async def join(ctx):
+    """ඔයා ඉන්න voice channel එකට bot ව ගෙන්න ගන්න"""
+    if not ctx.author.voice:
+        await ctx.send("මුලින්ම ඔයා voice channel එකකට join වෙලා ඉන්න ඕනේ!")
+        return
+
+    channel = ctx.author.voice.channel
     
-    # වොයිස් චැනල් එකට සම්බන්ධ වීම
-    if not interaction.guild.voice_client:
-        if interaction.user.voice:
-            await interaction.user.voice.channel.connect()
-        else:
-            return await interaction.followup.send("❌ මුලින්ම Voice channel එකකට සම්බන්ධ වෙන්න.")
+    # දැනටමත් වෙන channel එකක ඉන්නවා නම් එතනට යනවා
+    if ctx.voice_client is not None:
+        await ctx.voice_client.move_to(channel)
+    else:
+        await channel.connect()
 
-    try:
-        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-            info = ydl.extract_info(f"ytsearch:{search}" if not search.startswith("http") else search, download=False)
-            if 'entries' in info: info = info['entries'][0]
-            url = info['url']
-            title = info['title']
-            
-            # Audio Source එක සකස් කිරීම
-            source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-            
-            # ප්ලේ කරන අතරතුර එන Errors බලා ගැනීමට
-            def after_playing(error):
-                if error: print(f'Player error: {error}')
+    await ctx.send(f"Joined {channel}! Playing YouTube Live 24/7...")
 
-            if interaction.guild.voice_client.is_playing():
-                interaction.guild.voice_client.stop()
-                
-            interaction.guild.voice_client.play(source, after=after_playing)
-            await interaction.followup.send(f"🎶 දැන් වාදනය වේ: **{title}**")
-            
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "ffmpeg" in error_msg:
-            await interaction.followup.send("❌ FFmpeg සොයාගත නොහැක. කරුණාකර Dockerfile එක පරීක්ෂා කරන්න.")
-        else:
-            await interaction.followup.send(f"❌ දෝෂයක්: {str(e)[:100]}")
+    # Play logic
+    vc = ctx.voice_client
+    while vc.is_connected():
+        if not vc.is_playing():
+            try:
+                player = await YTDLSource.from_url(YOUTUBE_URL, loop=bot.loop, stream=True)
+                vc.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
+            except Exception as e:
+                print(f"Error: {e}")
+        await asyncio.sleep(5)
 
-@bot.tree.command(name="stop", description="සින්දුව නතර කරන්න")
-async def stop(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
-        interaction.guild.voice_client.stop()
-        await interaction.response.send_message("🛑 සින්දුව නතර කළා", ephemeral=True)
+@bot.command()
+async def leave(ctx):
+    """Bot ව channel එකෙන් අයින් කරන්න"""
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        await ctx.send("Disconnected!")
+    else:
+        await ctx.send("මම voice channel එකක නෙවෙයි ඉන්නේ.")
 
-@bot.tree.command(name="leave", description="Channel එකෙන් ඉවත් වන්න")
-async def leave(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
-        await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("👋 ඉවත් වුණා", ephemeral=True)
-
-keep_alive()
-# TOKEN එක Koyeb Environment Variables වල DISCORD_TOKEN ලෙස තිබිය යුතුයි
-bot.run(os.getenv('DISCORD_TOKEN'))
+bot.run(TOKEN)
