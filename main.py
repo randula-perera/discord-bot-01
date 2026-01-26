@@ -2,14 +2,15 @@ import discord
 from discord.ext import commands
 import yt_dlp
 import asyncio
+import os  # Environment variables කියවන්න ඕනේ
 
-# --- SETTINGS ---
-TOKEN = 'YOUR_BOT_TOKEN_HERE'
+# --- SETTINGS (Environment Variables වලින් ගනී) ---
+TOKEN = os.getenv('DISCORD_TOKEN') # Koyeb එකේ ඔයා දුන්න Key එක 'DISCORD_TOKEN' නම්
 YOUTUBE_URL = 'https://www.youtube.com/live/xf9Ejt4OmWQ?si=1t_PXPMienFqVtal'
 
 # Bot Intents setup
 intents = discord.Intents.default()
-intents.message_content = True  # Command කියවන්න මේක ඕනේ
+intents.message_content = True 
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 ytdl_options = {
@@ -42,43 +43,51 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user.name} is online and ready!')
+    print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
+    print('------')
 
 @bot.command()
 async def join(ctx):
-    """ඔයා ඉන්න voice channel එකට bot ව ගෙන්න ගන්න"""
+    """Voice channel එකට join වී streaming ආරම්භ කරයි"""
     if not ctx.author.voice:
-        await ctx.send("මුලින්ම ඔයා voice channel එකකට join වෙලා ඉන්න ඕනේ!")
+        await ctx.send("ඔයා voice channel එකකට join වෙලා ඉන්න ඕනේ!")
         return
 
     channel = ctx.author.voice.channel
     
-    # දැනටමත් වෙන channel එකක ඉන්නවා නම් එතනට යනවා
     if ctx.voice_client is not None:
         await ctx.voice_client.move_to(channel)
     else:
         await channel.connect()
 
-    await ctx.send(f"Joined {channel}! Playing YouTube Live 24/7...")
+    await ctx.send(f"Joined {channel}! ආරම්භ කරමින්...")
 
-    # Play logic
     vc = ctx.voice_client
+    
+    # පරණ player එකක් තිබ්බොත් නතර කරන්න
+    if vc.is_playing():
+        vc.stop()
+
     while vc.is_connected():
         if not vc.is_playing():
             try:
-                player = await YTDLSource.from_url(YOUTUBE_URL, loop=bot.loop, stream=True)
-                vc.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
+                async with ctx.typing():
+                    player = await YTDLSource.from_url(YOUTUBE_URL, loop=bot.loop, stream=True)
+                    vc.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
             except Exception as e:
-                print(f"Error: {e}")
-        await asyncio.sleep(5)
+                print(f"Streaming Error: {e}")
+        
+        await asyncio.sleep(10) # තත්පර 10කට වරක් status එක බලනවා
 
 @bot.command()
 async def leave(ctx):
-    """Bot ව channel එකෙන් අයින් කරන්න"""
+    """Bot අයින් කරන්න"""
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
         await ctx.send("Disconnected!")
-    else:
-        await ctx.send("මම voice channel එකක නෙවෙයි ඉන්නේ.")
 
-bot.run(TOKEN)
+# Token එක නැත්නම් error එකක් පෙන්වන්න
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("Error: DISCORD_TOKEN සොයාගත නොහැක. Koyeb Environment Variables පරීක්ෂා කරන්න.")
